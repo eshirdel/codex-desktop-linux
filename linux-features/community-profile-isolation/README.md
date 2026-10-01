@@ -1,26 +1,41 @@
 # Community Profile Isolation
 
 This optional Linux feature keeps ChatGPT Community runtime state separate from
-the official ChatGPT installation while preserving the normal `codex-desktop`
-package and installation identity.
+the official ChatGPT installation. The feature itself does not change the native
+package/install identity; the guided installer may choose another identity only
+for manual-update builds.
 
 ## What it does
 
 At Community launch time the feature pins:
 
-- `CODEX_HOME=$HOME/.codex-community`;
-- `CODEX_ELECTRON_USER_DATA_PATH=$HOME/.config/Codex-Community`;
-- Electron `--user-data-dir=$HOME/.config/Codex-Community`;
-- `CODEX_CLI_PATH` to the Community-owned wrapper staged inside
-  `/opt/codex-desktop/.codex-linux/`.
+- `CODEX_HOME` to the configured Community Codex state root;
+- `CODEX_ELECTRON_USER_DATA_PATH` and Electron `--user-data-dir` to the
+  configured Community Electron profile root;
+- `CODEX_CLI_PATH` to the Community-owned wrapper staged inside the packaged
+  application.
+
+The default roots remain:
+
+```text
+~/.codex-community
+~/.config/Codex-Community
+```
+
+The guided installer shows these defaults when this feature is selected and
+allows either root to be changed to another `~/...` or absolute path. The
+values are stored under `settings.community-profile-isolation` in the local
+`linux-features/features.json` and are included in the validated feature
+settings used by updater rebuilds.
 
 The signed upstream bootstrap reasserts Electron `userData` from
 `CODEX_ELECTRON_USER_DATA_PATH` immediately before the single-instance lock,
 so the command-line argument alone is not sufficient.
 
-The wrapper executes `/opt/codex-desktop/resources/codex`, repairs a runtime
-`PATH` that may put another `codex` ahead of Community resources, and pins
-that dynamic path through `shell_environment_policy.set.PATH`.
+The wrapper executes the bundled `resources/codex` under the current packaged
+application root, repairs a runtime `PATH` that may put another `codex` ahead
+of Community resources, and pins that dynamic path through
+`shell_environment_policy.set.PATH`.
 
 ## Compatibility and failure boundaries
 
@@ -37,8 +52,9 @@ The feature fails closed when:
 - `CODEX_HOME` resolves outside the Community state directory;
 - the bundled Community `codex` executable is missing or not executable.
 
-Existing symlinks for `~/.codex-community` are supported. The wrapper compares
-physical paths when the directories exist, matching launcher canonicalization.
+Existing symlinks for the configured Community Codex state root are supported.
+The wrapper compares physical paths when the directories exist, matching
+launcher canonicalization.
 
 The official app, normal shell `codex`, official `codex://` handler, and
 package identity are not modified. The feature does not migrate, merge, clear,

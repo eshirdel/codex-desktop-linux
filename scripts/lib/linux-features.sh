@@ -9,6 +9,7 @@ run_linux_feature_stage_hooks() {
     local feature_helper="$SCRIPT_DIR/scripts/lib/linux-features.js"
     local feature_id
     local hook_path
+    local settings_json
 
     [ -f "$feature_helper" ] || {
         warn "Linux feature helper not found at $feature_helper"
@@ -21,11 +22,17 @@ run_linux_feature_stage_hooks() {
         return 1
     fi
 
-    while IFS=$'\t' read -r feature_id hook_path; do
+    while IFS=$'\t' read -r feature_id hook_path settings_json; do
         [ -n "$feature_id" ] || continue
         [ -n "$hook_path" ] || continue
         info "Running Linux feature stage hook: $feature_id"
-        if ! SCRIPT_DIR="$SCRIPT_DIR" INSTALL_DIR="$INSTALL_DIR" WORK_DIR="$WORK_DIR" ARCH="$ARCH" CODEX_UPSTREAM_APP_DIR="$app_dir" bash "$hook_path"; then
+        if ! SCRIPT_DIR="$SCRIPT_DIR" \
+            INSTALL_DIR="$INSTALL_DIR" \
+            WORK_DIR="$WORK_DIR" \
+            ARCH="$ARCH" \
+            CODEX_UPSTREAM_APP_DIR="$app_dir" \
+            CODEX_LINUX_FEATURE_SETTINGS_JSON="${settings_json:-}" \
+            bash "$hook_path"; then
             warn "Linux feature stage hook failed: $feature_id"
             return 1
         fi
