@@ -1,0 +1,118 @@
+name: Community profile isolation validation
+
+on:
+  push:
+    branches:
+      - community-profile-isolation-review-fixes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-latest-community:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+
+      - name: Require latest upstream Community baseline
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/ilysenko/codex-desktop-linux.git main:refs/remotes/upstream/main
+          base="$(git merge-base HEAD refs/remotes/upstream/main)"
+          upstream="$(git rev-parse refs/remotes/upstream/main)"
+          printf 'branch=%s\nupstream-main=%s\nmerge-base=%s\n' "$(git rev-parse HEAD)" "$upstream" "$base"
+          test "$base" = "$upstream"
+
+      - name: Install validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev gnupg patchelf
+
+      - name: Run source regressions
+        run: |
+          set -euo pipefail
+          bash -n \
+            linux-features/community-profile-isolation/env.sh \
+            linux-features/community-profile-isolation/launcher-hook.sh \
+            linux-features/community-profile-isolation/codex-cli-wrapper.sh
+          node --test linux-features/community-profile-isolation/test.js
+          node --test scripts/lib/linux-features.test.js
+          node --test scripts/ci/github-actions-workflows.test.js
+          git diff --check refs/remotes/upstream/main...HEAD
+
+      - name: Resolve latest signed OpenAI Linux package
+        id: upstream
+        run: |
+          set -euo pipefail
+          mkdir -p upstream
+          package="$(node scripts/lib/upstream-linux-package.js \
+            --output-dir upstream/amd64 \
+            --metadata upstream/amd64.json \
+            --key-base64 assets/openai-codex-linux-repository-key.gpg.base64 \
+            --arch amd64)"
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          cat upstream/amd64.json
+
+      - name: Require repository pin to match latest signed stable
+        run: |
+          node - upstream/amd64.json nix/upstream-linux-packages.json <<'NODE'
+          const fs = require("node:fs");
+          const resolved = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const pinned = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const amd64 = pinned.amd64 ?? {};
+          if (
+            resolved.version !== pinned.version ||
+            resolved.repositoryPath !== amd64.repositoryPath ||
+            resolved.sha256 !== amd64.sha256
+          ) {
+            throw new Error(
+              "Community source is not pinned to the latest resolved signed stable: " +
+              JSON.stringify({ resolved, pinned })
+            );
+          }
+          console.log("latest signed stable matches repository pin:", resolved.version);
+          NODE
+
+      - name: Build only Community profile isolation
+        env:
+          CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/community-profile-isolation-features.json
+          CODEX_INSTALL_DIR: ${{ github.workspace }}/codex-app-community-profile-isolation
+          CODEX_TARGET_ARCH: amd64
+        run: |
+          set -euo pipefail
+          cat > "$CODEX_LINUX_FEATURES_CONFIG" <<'JSON'
+          {
+            "enabled": ["community-profile-isolation"]
+          }
+          JSON
+          ./install.sh "${{ steps.upstream.outputs.package }}"
+          test -x "$CODEX_INSTALL_DIR/.codex-linux/features/community-profile-isolation/codex-cli-wrapper.sh"
+          grep -R -F 'CODEX_HOME="$HOME/.codex-community"' "$CODEX_INSTALL_DIR/.codex-linux/env.d"
+          grep -R -F 'CODEX_ELECTRON_USER_DATA_PATH' "$CODEX_INSTALL_DIR/.codex-linux/launcher.d"
+
+      - name: Test against signed upstream bootstrap
+        run: |
+          set -euo pipefail
+          upstream_root="$(mktemp -d)"
+          extracted_asar="$(mktemp -d)"
+          dpkg-deb -x "${{ steps.upstream.outputs.package }}" "$upstream_root"
+          npx --yes @electron/asar extract \
+            "$upstream_root/usr/lib/chatgpt/resources/app.asar" \
+            "$extracted_asar"
+          CODEX_SIGNED_EXTRACTED_APP="$extracted_asar" \
+            node --test linux-features/community-profile-isolation/test.js
+
+      - name: Summarize exact validated inputs
+        run: |
+          printf '%s\n' \
+            "community-branch=$(git rev-parse HEAD)" \
+            "community-upstream-base=$(git rev-parse refs/remotes/upstream/main)" \
+            "official-package=$(node -p "require('./upstream/amd64.json').version")"
