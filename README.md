@@ -77,7 +77,20 @@ If the dependencies are already installed, use:
 make install-native
 ```
 
-To choose optional features before installing:
+For a guided installation with optional features:
+
+```bash
+make guided-install
+```
+
+On desktops with GTK4/PyGObject, the installer uses a smart feature picker:
+required features are selected automatically, conflicting features are disabled
+immediately, and each affected row explains why. Zenity/KDialog and terminal
+selection remain fallbacks on systems without GTK4. The validated selection is
+written to `linux-features/features.json`, and updater-enabled packages keep the
+same feature snapshot for future rebuilds.
+
+To configure features without installing yet, keep using:
 
 ```bash
 make setup-native

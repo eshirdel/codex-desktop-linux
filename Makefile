@@ -34,7 +34,7 @@ esac; \
 printf '%s\n' "$$format"
 endef
 
-.PHONY: help check test ci-pr ci-all build-updater maybe-build-updater build-native-feature-helpers update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
+.PHONY: help check test ci-pr ci-all build-updater maybe-build-updater build-native-feature-helpers update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native guided-install bootstrap-native install-native update-native rebuild-next run-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
 
 help:
 	@printf '\nChatGPT Community from the official OpenAI Linux package\n\n'
@@ -43,6 +43,7 @@ help:
 	@printf '  %-20s %s\n' 'make rebuild-install' 'Build and transactionally replace codex-app/'
 	@printf '  %-20s %s\n' 'make inspect-upstream' 'Verify and inspect without promoting an app'
 	@printf '  %-20s %s\n' 'make setup-native' 'Configure optional Linux features'
+	@printf '  %-20s %s\n' 'make guided-install' 'Choose features, then build, package, and install'
 	@printf '  %-20s %s\n' 'make bootstrap-native' 'Install build dependencies, build, package, install'
 	@printf '  %-20s %s\n' 'make install-native' 'Build, package, and install for this distro'
 	@printf '  %-20s %s\n' 'make deb|rpm|pacman' 'Build a native package in dist/'
@@ -97,6 +98,9 @@ build-app build-app-fresh:
 
 setup-native:
 	bash scripts/bootstrap-wizard.sh
+
+guided-install:
+	CODEX_BOOTSTRAP_INSTALL_NATIVE=1 bash scripts/bootstrap-wizard.sh
 
 bootstrap-native:
 	bash scripts/install-deps.sh

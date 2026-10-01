@@ -32,24 +32,41 @@ it uses the committed empty configuration and preserves the official ASAR.
 
 ## Guided feature setup
 
-Run the wizard before installation when you want optional features:
+For a one-command guided install:
+
+```bash
+make guided-install
+```
+
+On graphical desktops with GTK4/PyGObject, the wizard opens the smart feature
+picker. Selecting a feature automatically selects its requirements. Features
+that conflict with the active selection are switched off and made unavailable
+until the conflicting feature is disabled, with the reason shown on the row.
+The existing Zenity/KDialog checklist and terminal prompts remain fallbacks.
+
+The wizard:
+
+1. checks the supported architecture and available tools;
+2. lists repository and user-local feature manifests;
+3. resolves requirements and conflicts before writing configuration;
+4. writes the gitignored `linux-features/features.json`;
+5. selects whether native packages include the updater;
+6. optionally previews narrowly scoped feature-data cleanup;
+7. with `make guided-install`, builds, packages, and installs in the same process.
+
+The feature configuration remains the source of truth for future updater
+rebuilds: updater-enabled packages embed the validated enabled-feature snapshot
+and reapply it to later official application packages.
+
+To configure features without installing yet, use:
 
 ```bash
 make setup-native
 make install-native
 ```
 
-The wizard:
-
-1. checks the supported architecture and available tools;
-2. lists repository and user-local feature manifests;
-3. shows feature requirements, conflicts, and warnings;
-4. writes the gitignored `linux-features/features.json`;
-5. selects whether native packages include the updater;
-6. optionally previews narrowly scoped feature-data cleanup.
-
-It never enables a feature implicitly, and setup alone does not build or
-install anything. Read the README inside each selected feature directory.
+Setup alone does not build or install anything. Read the README inside each
+selected feature directory.
 
 ## Non-interactive setup
 
