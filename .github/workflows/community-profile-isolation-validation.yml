@@ -36,19 +36,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y dpkg-dev gnupg patchelf
 
-      - name: Run source regressions
+      - name: Check feature shell syntax
         run: |
-          set -euo pipefail
           bash -n \
             linux-features/community-profile-isolation/env.sh \
             linux-features/community-profile-isolation/launcher-hook.sh \
             linux-features/community-profile-isolation/codex-cli-wrapper.sh
-          node --test linux-features/community-profile-isolation/test.js
-          node --test scripts/lib/linux-features.test.js
-          node --test scripts/ci/github-actions-workflows.test.js
-          git diff --check refs/remotes/upstream/main...HEAD
+
+      - name: Run Community isolation regressions
+        if: always()
+        run: node --test linux-features/community-profile-isolation/test.js
+
+      - name: Run Linux feature framework regressions
+        if: always()
+        run: node --test scripts/lib/linux-features.test.js
+
+      - name: Run workflow contract regressions
+        if: always()
+        run: node --test scripts/ci/github-actions-workflows.test.js
+
+      - name: Check contribution diff
+        if: always()
+        run: git diff --check refs/remotes/upstream/main...HEAD
 
       - name: Resolve latest signed OpenAI Linux package
+        if: always()
         id: upstream
         run: |
           set -euo pipefail
@@ -62,6 +74,7 @@ jobs:
           cat upstream/amd64.json
 
       - name: Require repository pin to match latest signed stable
+        if: always()
         run: |
           node - upstream/amd64.json nix/upstream-linux-packages.json <<'NODE'
           const fs = require("node:fs");
@@ -82,6 +95,7 @@ jobs:
           NODE
 
       - name: Build only Community profile isolation
+        if: always()
         env:
           CODEX_LINUX_FEATURES_CONFIG: ${{ github.workspace }}/community-profile-isolation-features.json
           CODEX_INSTALL_DIR: ${{ github.workspace }}/codex-app-community-profile-isolation
@@ -99,6 +113,7 @@ jobs:
           grep -R -F 'CODEX_ELECTRON_USER_DATA_PATH' "$CODEX_INSTALL_DIR/.codex-linux/launcher.d"
 
       - name: Test against signed upstream bootstrap
+        if: always()
         run: |
           set -euo pipefail
           upstream_root="$(mktemp -d)"
@@ -111,6 +126,7 @@ jobs:
             node --test linux-features/community-profile-isolation/test.js
 
       - name: Summarize exact validated inputs
+        if: always()
         run: |
           printf '%s\n' \
             "community-branch=$(git rev-parse HEAD)" \
