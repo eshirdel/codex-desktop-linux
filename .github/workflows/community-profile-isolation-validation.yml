@@ -43,9 +43,42 @@ jobs:
             linux-features/community-profile-isolation/launcher-hook.sh \
             linux-features/community-profile-isolation/codex-cli-wrapper.sh
 
-      - name: Run Community isolation regressions
+      - name: Manifest conflict regression
         if: always()
-        run: node --test linux-features/community-profile-isolation/test.js
+        run: node --test --test-name-pattern="manifest stages the wrapper and rejects shared app-server socket" linux-features/community-profile-isolation/test.js
+
+      - name: Environment hook regression
+        if: always()
+        run: node --test --test-name-pattern="environment hook pins Community state and bare codex resolution" linux-features/community-profile-isolation/test.js
+
+      - name: Launcher profile contract regression
+        if: always()
+        run: node --test --test-name-pattern="launcher exports upstream Electron profile contract and CLI wrapper" linux-features/community-profile-isolation/test.js
+
+      - name: Launcher conflicting profile regression
+        if: always()
+        run: node --test --test-name-pattern="launcher fails closed for conflicting Electron profiles" linux-features/community-profile-isolation/test.js
+
+      - name: Launcher missing wrapper regression
+        if: always()
+        run: node --test --test-name-pattern="launcher fails closed when Community CLI wrapper is missing" linux-features/community-profile-isolation/test.js
+
+      - name: Wrapper PATH regression
+        if: always()
+        run: node --test --test-name-pattern="wrapper repairs runtime PATH and pins child PATH" linux-features/community-profile-isolation/test.js
+
+      - name: Wrapper symlink regression
+        if: always()
+        run: node --test --test-name-pattern="wrapper accepts launcher-canonicalized symlinked Community home" linux-features/community-profile-isolation/test.js
+
+      - name: Full launcher-to-wrapper regression
+        if: always()
+        run: node --test --test-name-pattern="real launcher canonicalizes symlinked state before invoking wrapper" linux-features/community-profile-isolation/test.js
+
+      - name: Wrong CODEX_HOME regression
+        if: always()
+        run: node --test --test-name-pattern="wrapper refuses a non-Community CODEX_HOME" linux-features/community-profile-isolation/test.js
+
 
       - name: Run Linux feature framework regressions
         if: always()
@@ -123,7 +156,8 @@ jobs:
             "$upstream_root/usr/lib/chatgpt/resources/app.asar" \
             "$extracted_asar"
           CODEX_SIGNED_EXTRACTED_APP="$extracted_asar" \
-            node --test linux-features/community-profile-isolation/test.js
+            node --test --test-name-pattern="signed upstream bootstrap" \
+              linux-features/community-profile-isolation/test.js
 
       - name: Summarize exact validated inputs
         if: always()
