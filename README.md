@@ -16,9 +16,10 @@ repackages the signed upstream Linux payload, adds disabled-by-default Linux
 features, and produces deb, RPM, pacman, AppImage, and Nix outputs.
 
 The custom application appears in desktop menus as **ChatGPT Community** and
-uses an icon marked with a blue `C`. Its package, command, and installation
-identity remain `codex-desktop` and `/opt/codex-desktop`, so it is easy to
-distinguish from OpenAI's separate **ChatGPT** package.
+uses an icon marked with a blue `C`. Its default package, command, and
+installation identity are `codex-desktop` and `/opt/codex-desktop`, so it is
+easy to distinguish from OpenAI's separate **ChatGPT** package. The guided
+installer can use another native package/install name in manual-update mode.
 
 OpenAI's signed Linux `.deb` is the only upstream source. The official
 Electron runtime, native modules, bundled `codex` and `rg`, code-mode host,
@@ -77,18 +78,27 @@ If the dependencies are already installed, use:
 make install-native
 ```
 
-For a guided installation with optional features:
+For the graphical guided installer, run the standalone repository entrypoint:
 
 ```bash
-make guided-install
+./install-community
 ```
 
-On desktops with GTK4/PyGObject, the installer uses a smart feature picker:
-required features are selected automatically, conflicting features are disabled
-immediately, and each affected row explains why. Zenity/KDialog and terminal
-selection remain fallbacks on systems without GTK4. The validated selection is
-written to `linux-features/features.json`, and updater-enabled packages keep the
-same feature snapshot for future rebuilds.
+(`make guided-install` invokes the same entrypoint.) The installer is part of
+the repository setup experience, not an optional Linux feature. On desktops
+with GTK4/PyGObject it walks through feature selection, feature-specific
+settings, installation options, review, and build/install progress with a live
+log. Required features are selected automatically; conflicting choices are
+disabled with the reason kept visible.
+
+When `community-profile-isolation` is selected, the next step shows its Codex
+state and Electron profile roots, prefilled with the defaults and editable
+before the build. Automatic-update packages keep the normal `codex-desktop`
+identity and `/opt/codex-desktop` root. Manual-update mode may instead use a
+validated custom installation name, which maps to `/opt/<installation-name>`.
+The installer stores its selections in the gitignored
+`linux-features/features.json`; updater-enabled builds also embed the validated
+enabled-feature settings for future official-package rebuilds.
 
 To configure features without installing yet, keep using:
 

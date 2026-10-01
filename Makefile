@@ -100,7 +100,7 @@ setup-native:
 	bash scripts/bootstrap-wizard.sh
 
 guided-install:
-	CODEX_BOOTSTRAP_INSTALL_NATIVE=1 bash scripts/bootstrap-wizard.sh
+	./install-community
 
 bootstrap-native:
 	bash scripts/install-deps.sh

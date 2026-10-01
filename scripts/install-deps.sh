@@ -10,6 +10,8 @@ source "$SCRIPT_DIR/lib/install-deps-rust.sh"
 run_privileged() {
     if [ "$(id -u)" -eq 0 ]; then
         "$@"
+    elif [ "${CODEX_PRIVILEGE_HELPER:-}" = "pkexec" ] && command -v pkexec >/dev/null 2>&1; then
+        pkexec "$@"
     else
         "$SCRIPT_DIR/sudo-with-alert.sh" "$@"
     fi

@@ -30,33 +30,41 @@ make install-native
 `install-native` does not open the feature wizard. With no local feature file,
 it uses the committed empty configuration and preserves the official ASAR.
 
-## Guided feature setup
+## Guided installer
 
-For a one-command guided install:
+After cloning the repository, launch the standalone installer:
 
 ```bash
-make guided-install
+./install-community
 ```
 
-On graphical desktops with GTK4/PyGObject, the wizard opens the smart feature
-picker. Selecting a feature automatically selects its requirements. Features
-that conflict with the active selection are switched off and made unavailable
-until the conflicting feature is disabled, with the reason shown on the row.
-The existing Zenity/KDialog checklist and terminal prompts remain fallbacks.
+`make guided-install` is an alias for the same flow. The installer is not a
+Linux feature and never appears in the feature list.
 
-The wizard:
+On graphical desktops with GTK4/PyGObject, the installer runs a multi-step
+flow:
 
-1. checks the supported architecture and available tools;
-2. lists repository and user-local feature manifests;
-3. resolves requirements and conflicts before writing configuration;
-4. writes the gitignored `linux-features/features.json`;
-5. selects whether native packages include the updater;
-6. optionally previews narrowly scoped feature-data cleanup;
-7. with `make guided-install`, builds, packages, and installs in the same process.
+1. choose optional features; requirements are selected automatically and
+   conflicting rows are disabled with a visible explanation;
+2. when `community-profile-isolation` is enabled, review or edit the isolated
+   Codex state and Electron profile roots;
+3. choose updater/dependency options and the native installation identity;
+4. review the resolved configuration;
+5. build, package, and install while a stage progress bar and live log remain
+   visible.
 
-The feature configuration remains the source of truth for future updater
-rebuilds: updater-enabled packages embed the validated enabled-feature snapshot
-and reapply it to later official application packages.
+Automatic updates currently require the default `codex-desktop` package
+identity and `/opt/codex-desktop` root because the update manager verifies that
+package identity. Turning the updater off enables a validated custom installation
+name, mapped to `/opt/<installation-name>`.
+
+The gitignored `linux-features/features.json` stores enabled features,
+feature-specific settings, and guided-installer preferences. Updater-enabled
+packages embed the validated enabled-feature settings so future rebuilds against
+new official ChatGPT packages keep the same feature/profile selection.
+
+On systems without the GTK picker, `./install-community` falls back to the
+existing terminal guided setup.
 
 To configure features without installing yet, use:
 
