@@ -16,10 +16,9 @@ repackages the signed upstream Linux payload, adds disabled-by-default Linux
 features, and produces deb, RPM, pacman, AppImage, and Nix outputs.
 
 The custom application appears in desktop menus as **ChatGPT Community** and
-uses an icon marked with a blue `C`. Its default package, command, and
-installation identity are `codex-desktop` and `/opt/codex-desktop`, so it is
-easy to distinguish from OpenAI's separate **ChatGPT** package. The guided
-installer can use another native package/install name in manual-update mode.
+uses an icon marked with a blue `C`. Its package and command are
+`codex-desktop`, and its installation root is `/opt/codex-desktop`, so it is
+easy to distinguish from OpenAI's separate **ChatGPT** package.
 
 OpenAI's signed Linux `.deb` is the only upstream source. The official
 Electron runtime, native modules, bundled `codex` and `rg`, code-mode host,
