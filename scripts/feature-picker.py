@@ -460,6 +460,26 @@ def _display_names(model: SelectionModel, ids: Iterable[str]) -> str:
     return ", ".join(model.features[item].title for item in ids)
 
 
+def sorted_feature_ids(model: SelectionModel) -> list[str]:
+    return sorted(
+        model.features,
+        key=lambda feature_id: (
+            model.features[feature_id].title.casefold(),
+            feature_id.casefold(),
+        ),
+    )
+
+
+def feature_matches_query(feature: Feature, query: str) -> bool:
+    terms = [term.casefold() for term in query.split() if term.strip()]
+    if not terms:
+        return True
+    haystack = " ".join(
+        (feature.title, feature.id, feature.description)
+    ).casefold()
+    return all(term in haystack for term in terms)
+
+
 def run_gtk_picker(
     model: SelectionModel,
     current_settings: dict[str, dict],
@@ -517,6 +537,14 @@ def run_gtk_picker(
             intro.set_xalign(0)
             outer.append(intro)
 
+            self.search_entry = Gtk.SearchEntry()
+            self.search_entry.set_placeholder_text(
+                "Search features by name, ID, or description…"
+            )
+            self.search_entry.set_hexpand(True)
+            self.search_entry.connect("search-changed", self._on_search_changed)
+            outer.append(self.search_entry)
+
             scroller = Gtk.ScrolledWindow()
             scroller.set_vexpand(True)
             scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -529,7 +557,7 @@ def run_gtk_picker(
             list_box.add_css_class("boxed-list")
             scroller.set_child(list_box)
 
-            for feature_id in model.order:
+            for feature_id in sorted_feature_ids(model):
                 feature = model.features[feature_id]
                 row = Gtk.ListBoxRow()
                 row.set_activatable(True)
@@ -617,6 +645,30 @@ def run_gtk_picker(
             self.connect("close-request", self._close_requested)
             self._refresh()
 
+        def _on_search_changed(self, _entry: Gtk.SearchEntry) -> None:
+            self._apply_search_filter()
+
+        def _apply_search_filter(self) -> None:
+            query = self.search_entry.get_text()
+            visible = 0
+            for feature_id, (row, _check, _status) in self.rows.items():
+                matches = feature_matches_query(model.features[feature_id], query)
+                row.set_visible(matches)
+                if matches:
+                    visible += 1
+
+            selected_count = len(model.selected)
+            if query.strip():
+                self.count_label.set_text(
+                    f"{selected_count} feature(s) selected • "
+                    f"{visible} of {len(self.rows)} shown"
+                )
+            else:
+                self.count_label.set_text(
+                    f"{selected_count} feature(s) selected • "
+                    f"{len(self.rows)} total"
+                )
+
         def _on_row_activated(self, _list_box: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
             feature_id = getattr(row, "feature_id", None)
             if not isinstance(feature_id, str):
@@ -696,7 +748,7 @@ def run_gtk_picker(
                 else:
                     status.set_text("Available")
 
-            self.count_label.set_text(f"{len(selected)} feature(s) selected")
+            self._apply_search_filter()
             self.refreshing = False
 
         def _apply(self, _button: Gtk.Button) -> None:

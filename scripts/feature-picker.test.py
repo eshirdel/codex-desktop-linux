@@ -89,6 +89,52 @@ class FeaturePickerModelTests(unittest.TestCase):
         model = feature_picker.SelectionModel(features, ["a"])
         self.assertEqual(model.blocked_by("consumer"), ["a"])
 
+    def test_feature_display_order_is_case_insensitive_by_title_then_id(self):
+        features = {
+            "z-id": feature_picker.Feature(
+                id="z-id",
+                title="alpha",
+                description="",
+                requires=(),
+                conflicts=(),
+            ),
+            "a-id": feature_picker.Feature(
+                id="a-id",
+                title="Alpha",
+                description="",
+                requires=(),
+                conflicts=(),
+            ),
+            "beta": feature_picker.Feature(
+                id="beta",
+                title="Beta",
+                description="",
+                requires=(),
+                conflicts=(),
+            ),
+        }
+        model = feature_picker.SelectionModel(features)
+        self.assertEqual(
+            feature_picker.sorted_feature_ids(model),
+            ["a-id", "z-id", "beta"],
+        )
+
+    def test_feature_search_matches_title_id_description_and_multiple_terms(self):
+        feature = feature_picker.Feature(
+            id="community-profile-isolation",
+            title="Community Profile Isolation",
+            description="Separate Electron and Codex state",
+            requires=(),
+            conflicts=(),
+        )
+        self.assertTrue(feature_picker.feature_matches_query(feature, "profile"))
+        self.assertTrue(feature_picker.feature_matches_query(feature, "COMMUNITY isolation"))
+        self.assertTrue(feature_picker.feature_matches_query(feature, "electron state"))
+        self.assertTrue(
+            feature_picker.feature_matches_query(feature, "community-profile-isolation")
+        )
+        self.assertFalse(feature_picker.feature_matches_query(feature, "shared socket"))
+
     def test_profile_path_validation_accepts_home_and_absolute_paths(self):
         self.assertEqual(
             feature_picker.validate_profile_path_spec("~/.codex-team", "Codex root"),
