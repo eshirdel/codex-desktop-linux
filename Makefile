@@ -7,6 +7,7 @@ REBUILD_REPORT_DIR ?= $(CURDIR)/dist-next/rebuild
 UPSTREAM_DEB ?=
 PACKAGE_NAME := codex-desktop
 PACKAGE_WITH_UPDATER ?= 1
+PACKAGE_FORMAT_DETECTOR := $(CURDIR)/scripts/lib/detect-package-format.sh
 MAX_BUILD_THREADS ?= 0
 MAX_BUILD_THREADS_VALUE := $(strip $(MAX_BUILD_THREADS))
 MAX_BUILD_THREADS_ENABLED := $(filter-out 0,$(MAX_BUILD_THREADS_VALUE))
@@ -19,19 +20,9 @@ PACMAN_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)-[0-9]*.pkg.tar.*
 
 UPSTREAM_ARG = $(if $(strip $(UPSTREAM_DEB)),"$(UPSTREAM_DEB)",)
 
-define detect_package_format
-format=""; \
-if [ -r /etc/os-release ]; then . /etc/os-release; fi; \
-tokens="$${ID:-} $${ID_LIKE:-}"; \
-case " $$tokens " in \
-  *" arch "*|*" manjaro "*|*" endeavouros "*) format=pacman ;; \
-  *" fedora "*|*" rhel "*|*" centos "*|*" suse "*|*" opensuse "*) format=rpm ;; \
-  *" debian "*|*" ubuntu "*|*" linuxmint "*|*" pop "*) format=deb ;; \
-esac; \
-[ -n "$$format" ] || { command -v dpkg-deb >/dev/null 2>&1 && format=deb; }; \
-[ -n "$$format" ] || { command -v rpmbuild >/dev/null 2>&1 && format=rpm; }; \
-[ -n "$$format" ] || { command -v makepkg >/dev/null 2>&1 && format=pacman; }; \
-printf '%s\n' "$$format"
+define resolve_package_format
+format="$$("$(PACKAGE_FORMAT_DETECTOR)")"; \
+case "$$format" in deb|rpm|pacman) ;; *) echo 'No supported native package format found.' >&2; exit 1 ;; esac
 endef
 
 .PHONY: help check test ci-pr ci-all build-updater maybe-build-updater build-native-feature-helpers update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native guided-install bootstrap-native install-native update-native rebuild-next run-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
@@ -136,17 +127,16 @@ appimage:
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" ./scripts/build-appimage.sh
 
 package:
-	@format="$$( $(detect_package_format) )"; \
+	@$(resolve_package_format); \
 	case "$$format" in \
 	  deb) $(MAKE) deb PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ;; \
 	  rpm) $(MAKE) rpm PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ;; \
 	  pacman) $(MAKE) pacman PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ;; \
-	  *) echo 'No supported package builder found.' >&2; exit 1 ;; \
 	esac
 
 install:
 	@latest() { "$(CURDIR)/scripts/select-latest-package.sh" "$$1"; }; \
-	format="$$( $(detect_package_format) )"; \
+	$(resolve_package_format); \
 	case "$$format" in \
 	  deb) artifact="$${DEB:-$$(latest '$(DEB_GLOB)')}"; [ -n "$$artifact" ]; "$(CURDIR)/scripts/sudo-with-alert.sh" dpkg -i "$$artifact" ;; \
 	  rpm) artifact="$${RPM:-$$(latest '$(RPM_GLOB)')}"; [ -n "$$artifact" ]; if command -v dnf >/dev/null; then "$(CURDIR)/scripts/sudo-with-alert.sh" dnf install -y "$$artifact"; else "$(CURDIR)/scripts/sudo-with-alert.sh" rpm -Uvh "$$artifact"; fi ;; \

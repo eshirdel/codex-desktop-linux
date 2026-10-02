@@ -233,23 +233,11 @@ def write_feature_config(
 
 
 def detect_package_format(repo_root: pathlib.Path) -> str:
-    helper = repo_root.resolve() / "scripts" / "lib" / "linux-target-detect.sh"
+    helper = repo_root.resolve() / "scripts" / "lib" / "detect-package-format.sh"
     if not helper.is_file():
         raise SelectionError(f"Package-format helper is missing: {helper}")
     process = subprocess.run(
-        [
-            "bash",
-            "-c",
-            (
-                'source "$1"; '
-                'OS_RELEASE_ID="$(os_release_field ID 2>/dev/null || true)"; '
-                'OS_RELEASE_ID_LIKE="$(os_release_field ID_LIKE 2>/dev/null || true)"; '
-                'OS_RELEASE_VERSION_ID="$(os_release_field VERSION_ID 2>/dev/null || true)"; '
-                'detect_package_format'
-            ),
-            "feature-picker",
-            str(helper),
-        ],
+        [str(helper)],
         capture_output=True,
         text=True,
         errors="replace",
@@ -266,6 +254,9 @@ def detect_package_format(repo_root: pathlib.Path) -> str:
 
 def build_install_stages(options: dict) -> list[tuple[str, list[str]]]:
     updater = bool(options["withUpdater"])
+    package_format = str(options["packageFormat"])
+    if package_format not in {"deb", "rpm", "pacman"}:
+        raise SelectionError(f"Unsupported native package format: {package_format}")
     stages: list[tuple[str, list[str]]] = []
     if bool(options.get("installDependencies", True)):
         stages.append(
@@ -278,7 +269,7 @@ def build_install_stages(options: dict) -> list[tuple[str, list[str]]]:
             "Building native package",
             [
                 "make",
-                "package",
+                package_format,
                 f"PACKAGE_WITH_UPDATER={1 if updater else 0}",
             ],
         ),

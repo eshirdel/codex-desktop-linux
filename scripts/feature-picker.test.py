@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import importlib.util
 import json
+import os
 import pathlib
+import subprocess
 import tempfile
 import unittest
 
 MODULE_PATH = pathlib.Path(__file__).with_name("feature-picker.py")
+REPO_ROOT = MODULE_PATH.parent.parent
 SPEC = importlib.util.spec_from_file_location("feature_picker", MODULE_PATH)
 feature_picker = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -174,21 +177,23 @@ class FeaturePickerModelTests(unittest.TestCase):
         stages = feature_picker.build_install_stages({
             "withUpdater": True,
             "installDependencies": False,
+            "packageFormat": "deb",
         })
         self.assertEqual(
             stages[-1][1],
-            ["make", "package", "PACKAGE_WITH_UPDATER=1"],
+            ["make", "deb", "PACKAGE_WITH_UPDATER=1"],
         )
 
     def test_install_plan_keeps_fixed_package_identity_without_updater(self):
         stages = feature_picker.build_install_stages({
             "withUpdater": False,
             "installDependencies": True,
+            "packageFormat": "pacman",
         })
         self.assertEqual(stages[0][1], ["bash", "scripts/install-deps.sh"])
         self.assertEqual(
             stages[-1][1],
-            ["make", "package", "PACKAGE_WITH_UPDATER=0"],
+            ["make", "pacman", "PACKAGE_WITH_UPDATER=0"],
         )
         self.assertEqual(feature_picker.PACKAGE_NAME, "codex-desktop")
         self.assertEqual(feature_picker.INSTALL_ROOT, "/opt/codex-desktop")
@@ -211,20 +216,80 @@ class FeaturePickerModelTests(unittest.TestCase):
     def test_package_format_uses_repository_detector(self):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            helper = root / "scripts" / "lib" / "linux-target-detect.sh"
+            helper = root / "scripts" / "lib" / "detect-package-format.sh"
             helper.parent.mkdir(parents=True)
-            helper.write_text(
-                'os_release_field() { return 1; }\n'
-                'detect_package_format() { printf "%s\\n" rpm; }\n'
-            )
+            helper.write_text('#!/bin/sh\nprintf "%s\\n" rpm\n')
+            helper.chmod(0o755)
             self.assertEqual(feature_picker.detect_package_format(root), "rpm")
 
-            helper.write_text(
-                'os_release_field() { return 1; }\n'
-                'detect_package_format() { printf "%s\\n" unknown; }\n'
-            )
+            helper.write_text('#!/bin/sh\nprintf "%s\\n" unknown\n')
+            helper.chmod(0o755)
             with self.assertRaises(feature_picker.SelectionError):
                 feature_picker.detect_package_format(root)
+
+    def test_make_package_matches_shared_detector_on_mixed_toolchains(self):
+        cases = [
+            ("artix", "arch", "pacman"),
+            ("sles", "suse opensuse", "rpm"),
+            ("ubuntu", "debian", "deb"),
+        ]
+        detector = REPO_ROOT / "scripts" / "lib" / "detect-package-format.sh"
+
+        with tempfile.TemporaryDirectory() as temp:
+            temp_root = pathlib.Path(temp)
+            fake_make = temp_root / "capture-make"
+            capture = temp_root / "capture.txt"
+            fake_bin = temp_root / "bin"
+            fake_bin.mkdir()
+            fake_dpkg = fake_bin / "dpkg-deb"
+            fake_dpkg.write_text("#!/bin/sh\nexit 0\n")
+            fake_dpkg.chmod(0o755)
+            fake_make.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$@" > "$PACKAGE_FORMAT_CAPTURE"\n'
+            )
+            fake_make.chmod(0o755)
+
+            for distro_id, id_like, expected in cases:
+                with self.subTest(distro=distro_id):
+                    release = temp_root / f"os-release-{distro_id}"
+                    release.write_text(
+                        f'ID={distro_id}\nID_LIKE="{id_like}"\nVERSION_ID=1\n'
+                    )
+                    env = os.environ.copy()
+                    env["OS_RELEASE_FILE"] = str(release)
+                    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+                    env["PACKAGE_FORMAT_CAPTURE"] = str(capture)
+
+                    detected = subprocess.run(
+                        [str(detector)],
+                        cwd=REPO_ROOT,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    ).stdout.strip()
+                    self.assertEqual(detected, expected)
+
+                    capture.unlink(missing_ok=True)
+                    subprocess.run(
+                        [
+                            "make",
+                            "--no-print-directory",
+                            f"MAKE={fake_make}",
+                            "package",
+                        ],
+                        cwd=REPO_ROOT,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    recursive_args = capture.read_text().splitlines()
+                    self.assertIn(expected, recursive_args)
+                    self.assertNotIn(
+                        {"pacman": "deb", "rpm": "deb", "deb": "rpm"}[expected],
+                        recursive_args,
+                    )
 
     def test_impossible_dependency_conflict_is_rejected(self):
         features = {
