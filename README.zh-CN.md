@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | 简体中文
+  <a href="README.md">English</a> | 简体中文 | <a href="README.fa.md">فارسی</a>
 </p>
 
 `codex-desktop` 是 OpenAI 官方 Linux ChatGPT 桌面应用的非官方社区发行版。
