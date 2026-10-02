@@ -16,9 +16,10 @@ repackages the signed upstream Linux payload, adds disabled-by-default Linux
 features, and produces deb, RPM, pacman, AppImage, and Nix outputs.
 
 The custom application appears in desktop menus as **ChatGPT Community** and
-uses an icon marked with a blue `C`. Its package, command, and installation
-identity remain `codex-desktop` and `/opt/codex-desktop`, so it is easy to
-distinguish from OpenAI's separate **ChatGPT** package.
+uses an icon marked with a blue `C`. Its default package, command, and
+installation identity are `codex-desktop` and `/opt/codex-desktop`, so it is
+easy to distinguish from OpenAI's separate **ChatGPT** package. The guided
+installer can use another native package/install name in manual-update mode.
 
 OpenAI's signed Linux `.deb` is the only upstream source. The official
 Electron runtime, native modules, bundled `codex` and `rg`, code-mode host,
@@ -77,7 +78,28 @@ If the dependencies are already installed, use:
 make install-native
 ```
 
-To choose optional features before installing:
+For the graphical guided installer, run the standalone repository entrypoint:
+
+```bash
+./install-community
+```
+
+(`make guided-install` invokes the same entrypoint.) The installer is part of
+the repository setup experience, not an optional Linux feature. On desktops
+with GTK4/PyGObject it walks through feature selection, installation options,
+review, and build/install progress with a live log. Required features are
+selected automatically; conflicting choices are disabled with the reason kept
+visible.
+
+The graphical installer does not modify feature implementations or feature
+settings. It updates only the enabled-feature list and its own installer
+preferences in the gitignored `linux-features/features.json`; any existing
+feature settings are preserved unchanged. Automatic-update packages keep the
+normal `codex-desktop` identity and `/opt/codex-desktop` root. Manual-update
+mode may instead use a validated custom installation name, which maps to
+`/opt/<installation-name>`.
+
+To configure features without installing yet, keep using:
 
 ```bash
 make setup-native
