@@ -6,9 +6,6 @@
   "conflicts": [
     "shared-app-server-socket"
   ],
-  "entrypoints": {
-    "stageHook": "./stage.sh"
-  },
   "runtimeHooks": {
     "env": {
       "source": "env.sh",
@@ -26,11 +23,6 @@
       "source": "codex-cli-wrapper.sh",
       "target": ".codex-linux/features/community-profile-isolation/codex-cli-wrapper.sh",
       "mode": "0755"
-    },
-    {
-      "source": "profile-config.sh",
-      "target": ".codex-linux/features/community-profile-isolation/profile-config.sh",
-      "mode": "0644"
     }
   ]
 }

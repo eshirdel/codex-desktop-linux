@@ -86,19 +86,18 @@ For the graphical guided installer, run the standalone repository entrypoint:
 
 (`make guided-install` invokes the same entrypoint.) The installer is part of
 the repository setup experience, not an optional Linux feature. On desktops
-with GTK4/PyGObject it walks through feature selection, feature-specific
-settings, installation options, review, and build/install progress with a live
-log. Required features are selected automatically; conflicting choices are
-disabled with the reason kept visible.
+with GTK4/PyGObject it walks through feature selection, installation options,
+review, and build/install progress with a live log. Required features are
+selected automatically; conflicting choices are disabled with the reason kept
+visible.
 
-When `community-profile-isolation` is selected, the next step shows its Codex
-state and Electron profile roots, prefilled with the defaults and editable
-before the build. Automatic-update packages keep the normal `codex-desktop`
-identity and `/opt/codex-desktop` root. Manual-update mode may instead use a
-validated custom installation name, which maps to `/opt/<installation-name>`.
-The installer stores its selections in the gitignored
-`linux-features/features.json`; updater-enabled builds also embed the validated
-enabled-feature settings for future official-package rebuilds.
+The graphical installer does not modify feature implementations or feature
+settings. It updates only the enabled-feature list and its own installer
+preferences in the gitignored `linux-features/features.json`; any existing
+feature settings are preserved unchanged. Automatic-update packages keep the
+normal `codex-desktop` identity and `/opt/codex-desktop` root. Manual-update
+mode may instead use a validated custom installation name, which maps to
+`/opt/<installation-name>`.
 
 To configure features without installing yet, keep using:
 

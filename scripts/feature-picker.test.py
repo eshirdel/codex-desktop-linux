@@ -135,20 +135,6 @@ class FeaturePickerModelTests(unittest.TestCase):
         )
         self.assertFalse(feature_picker.feature_matches_query(feature, "shared socket"))
 
-    def test_profile_path_validation_accepts_home_and_absolute_paths(self):
-        self.assertEqual(
-            feature_picker.validate_profile_path_spec("~/.codex-team", "Codex root"),
-            "~/.codex-team",
-        )
-        self.assertEqual(
-            feature_picker.validate_profile_path_spec("/srv/chatgpt/profile", "Codex root"),
-            "/srv/chatgpt/profile",
-        )
-
-    def test_profile_path_validation_rejects_relative_paths(self):
-        with self.assertRaises(feature_picker.SelectionError):
-            feature_picker.validate_profile_path_spec(".codex-team", "Codex root")
-
     def test_installation_name_validation(self):
         self.assertEqual(
             feature_picker.validate_installation_name("codex-community-2"),
@@ -173,12 +159,6 @@ class FeaturePickerModelTests(unittest.TestCase):
                 config,
                 ["community-profile-isolation"],
                 {
-                    "community-profile-isolation": {
-                        "codexHome": "~/.codex-team",
-                        "electronUserDataPath": "~/.config/Codex-Team",
-                    }
-                },
-                {
                     "packageName": "codex-team",
                     "withUpdater": False,
                     "installDependencies": True,
@@ -188,8 +168,8 @@ class FeaturePickerModelTests(unittest.TestCase):
             self.assertEqual(data["enabled"], ["community-profile-isolation"])
             self.assertEqual(data["settings"]["ui-tweaks"], {"keep": True})
             self.assertEqual(
-                data["settings"]["community-profile-isolation"]["codexHome"],
-                "~/.codex-team",
+                data["settings"]["community-profile-isolation"],
+                {"codexHome": "~/.old"},
             )
             self.assertEqual(data["installer"]["packageName"], "codex-team")
             self.assertFalse(data["installer"]["withUpdater"])

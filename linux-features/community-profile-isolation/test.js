@@ -15,8 +15,6 @@ const launcherTemplate = path.resolve(featureDir, "../../launcher/start.sh.templ
 const wrapperSource = path.join(featureDir, "codex-cli-wrapper.sh");
 const envSource = path.join(featureDir, "env.sh");
 const launcherHookSource = path.join(featureDir, "launcher-hook.sh");
-const profileConfigSource = path.join(featureDir, "profile-config.sh");
-const stageHookSource = path.join(featureDir, "stage.sh");
 const manifest = require("./feature.json");
 
 function writeExecutable(file, lines) {
@@ -36,23 +34,16 @@ function makeFakeApp(root) {
   fs.mkdirSync(path.dirname(wrapper), { recursive: true });
   fs.copyFileSync(wrapperSource, wrapper);
   fs.chmodSync(wrapper, 0o755);
-  fs.copyFileSync(profileConfigSource, path.join(path.dirname(wrapper), "profile-config.sh"));
   return { app, wrapper };
 }
 
 test("manifest stages the wrapper and rejects shared app-server socket", () => {
   assert.deepEqual(manifest.conflicts, ["shared-app-server-socket"]);
-  assert.deepEqual(manifest.entrypoints, { stageHook: "./stage.sh" });
   assert.deepEqual(manifest.resources, [
     {
       source: "codex-cli-wrapper.sh",
       target: ".codex-linux/features/community-profile-isolation/codex-cli-wrapper.sh",
       mode: "0755",
-    },
-    {
-      source: "profile-config.sh",
-      target: ".codex-linux/features/community-profile-isolation/profile-config.sh",
-      mode: "0644",
     },
   ]);
 
@@ -133,73 +124,6 @@ test("launcher exports upstream Electron profile contract and CLI wrapper", () =
       "env CODEX_CLI_PATH=" + fake.wrapper,
       "electron-arg --user-data-dir=" + canonical,
     ]);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("custom profile settings stage into env, launcher, and CLI wrapper", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "community-isolation-custom-profile-"));
-  try {
-    const home = path.join(root, "home");
-    fs.mkdirSync(home, { recursive: true });
-    const fake = makeFakeApp(root);
-    fs.mkdirSync(path.join(fake.app, "resources"), { recursive: true });
-    writeExecutable(path.join(fake.app, "resources", "codex"), [
-      "#!/bin/sh",
-      'printf "%s\\n" "$CODEX_HOME"',
-    ]);
-
-    childProcess.execFileSync(stageHookSource, [], {
-      env: {
-        ...process.env,
-        INSTALL_DIR: fake.app,
-        CODEX_LINUX_FEATURE_SETTINGS_JSON: JSON.stringify({
-          codexHome: "~/.codex-team",
-          electronUserDataPath: "~/.config/Codex-Team",
-        }),
-      },
-    });
-
-    const envOutput = childProcess.execFileSync(
-      "bash",
-      ["-c", '. "$1"; printf "%s\\n" "$CODEX_HOME"', "_", envSource],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          HOME: home,
-          CODEX_LINUX_APP_DIR: fake.app,
-          PATH: "/usr/bin:/bin",
-        },
-      },
-    ).trim();
-    assert.equal(envOutput, path.join(home, ".codex-team"));
-
-    const launcherOutput = childProcess.execFileSync(launcherHookSource, [], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: home,
-        CODEX_LINUX_APP_DIR: fake.app,
-      },
-    });
-    assert.match(
-      launcherOutput,
-      new RegExp("CODEX_ELECTRON_USER_DATA_PATH=" + path.join(home, ".config", "Codex-Team")),
-    );
-
-    const wrapperOutput = childProcess.execFileSync(fake.wrapper, ["--version"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: home,
-        CODEX_HOME: path.join(home, ".codex-team"),
-        CODEX_LINUX_APP_DIR: fake.app,
-        PATH: "/usr/bin:/bin",
-      },
-    }).trim();
-    assert.equal(wrapperOutput, path.join(home, ".codex-team"));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

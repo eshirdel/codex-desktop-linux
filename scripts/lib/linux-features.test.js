@@ -12,7 +12,6 @@ const {
   enabledLinuxFeaturePackageDependencies,
   enabledLinuxFeaturePackageFiles,
   enabledLinuxFeaturePackagePlan,
-  enabledLinuxFeatureStageHooks,
   loadLinuxFeaturePatchDescriptors,
   loadEnabledLinuxFeatures,
   linuxFeaturesConfig,
@@ -167,41 +166,6 @@ test("Linux feature asset matchers receive feature settings", (t) => {
 
   const [descriptor] = loadLinuxFeaturePatchDescriptors({ featuresRoot });
   assert.equal(descriptor.assetMatch("current-contract", "app-current.js", {}), true);
-});
-
-test("stage hooks receive feature settings as serialized JSON", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-stage-settings-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-
-  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
-    id: "unsafe-link",
-    title: "Unsafe Link",
-    entrypoints: { stageHook: "./stage.sh" },
-  });
-  fs.writeFileSync(path.join(featureDir, "stage.sh"), "#!/bin/sh\nexit 0\n");
-  fs.writeFileSync(
-    path.join(featuresRoot, "features.json"),
-    JSON.stringify({
-      enabled: ["unsafe-link"],
-      settings: {
-        "unsafe-link": {
-          path: "~/.custom",
-          nested: { enabled: true },
-        },
-      },
-    }),
-  );
-
-  const [hook] = enabledLinuxFeatureStageHooks({
-    featuresRoot,
-    featuresConfigPath: path.join(featuresRoot, "features.json"),
-  });
-  assert.equal(hook.id, "unsafe-link");
-  assert.equal(hook.path, path.join(featureDir, "stage.sh"));
-  assert.deepEqual(JSON.parse(hook.settingsJson), {
-    path: "~/.custom",
-    nested: { enabled: true },
-  });
 });
 
 test("enabled patch descriptor load errors are fatal", (t) => {

@@ -1171,54 +1171,12 @@ apply_feature_picker_selection() {
     print_safe_disable_guidance "$disable_csv"
 }
 
-apply_feature_picker_settings() {
-    local result_json="$1"
-    local config_path
-    config_path="$(feature_config_path)"
-
-    python3 - "$config_path" "$result_json" <<'PY'
-import json
-import pathlib
-import sys
-
-config_path = pathlib.Path(sys.argv[1])
-result = json.loads(sys.argv[2])
-incoming = result.get("settings", {})
-if not isinstance(incoming, dict):
-    raise SystemExit("Smart feature picker settings payload must be an object")
-if not incoming:
-    raise SystemExit(0)
-
-if config_path.exists():
-    data = json.loads(config_path.read_text(encoding="utf-8"))
-else:
-    data = {}
-if not isinstance(data, dict):
-    raise SystemExit(f"{config_path}: feature config must be an object")
-
-settings = data.get("settings", {})
-if settings is None:
-    settings = {}
-if not isinstance(settings, dict):
-    raise SystemExit(f"{config_path}: settings must be an object")
-
-for feature_id, value in incoming.items():
-    if not isinstance(feature_id, str) or not isinstance(value, dict):
-        raise SystemExit("Invalid smart feature picker settings payload")
-    settings[feature_id] = value
-
-data["settings"] = settings
-config_path.parent.mkdir(parents=True, exist_ok=True)
-config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-PY
-}
-
 prompt_for_feature_changes_smart_gui() {
-    local feature_lines result_json selected status=0
+    local feature_lines selected status=0
     feature_lines="$(run_feature_config_python "" "" "0" "tsv")" || return 1
     [ -n "$feature_lines" ] || return 1
 
-    result_json="$(python3 "$SCRIPT_DIR/feature-picker.py" \
+    selected="$(python3 "$SCRIPT_DIR/feature-picker.py" \
         --features-root "$FEATURES_ROOT" \
         --config "$(feature_config_path)")" || status=$?
 
@@ -1231,19 +1189,7 @@ prompt_for_feature_changes_smart_gui() {
         return 1
     fi
 
-    selected="$(python3 - "$result_json" <<'PY'
-import json
-import sys
-result = json.loads(sys.argv[1])
-selected = result.get("selected", [])
-if not isinstance(selected, list) or not all(isinstance(item, str) for item in selected):
-    raise SystemExit("Invalid smart feature picker selected payload")
-print("\n".join(selected))
-PY
-)" || return 1
-
     apply_feature_picker_selection "$feature_lines" "$selected"
-    apply_feature_picker_settings "$result_json"
 }
 
 # True when an interactive GUI checklist can be shown: a graphical session,

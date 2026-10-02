@@ -46,22 +46,20 @@ flow:
 
 1. choose optional features; requirements are selected automatically and
    conflicting rows are disabled with a visible explanation;
-2. when `community-profile-isolation` is enabled, review or edit the isolated
-   Codex state and Electron profile roots;
-3. choose updater/dependency options and the native installation identity;
-4. review the resolved configuration;
-5. build, package, and install while a stage progress bar and live log remain
+2. choose updater/dependency options and the native installation identity;
+3. review the resolved configuration;
+4. build, package, and install while a stage progress bar and live log remain
    visible.
+
+The graphical installer does not change feature implementation files or feature
+settings. It updates the enabled-feature list and its own installer preferences
+in the gitignored `linux-features/features.json`, preserving any existing
+feature settings unchanged.
 
 Automatic updates currently require the default `codex-desktop` package
 identity and `/opt/codex-desktop` root because the update manager verifies that
 package identity. Turning the updater off enables a validated custom installation
 name, mapped to `/opt/<installation-name>`.
-
-The gitignored `linux-features/features.json` stores enabled features,
-feature-specific settings, and guided-installer preferences. Updater-enabled
-packages embed the validated enabled-feature settings so future rebuilds against
-new official ChatGPT packages keep the same feature/profile selection.
 
 On systems without the GTK picker, `./install-community` falls back to the
 existing terminal guided setup.

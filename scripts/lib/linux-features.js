@@ -665,7 +665,6 @@ function enabledLinuxFeatureStageHooks(options = {}) {
     .map((feature) => ({
       id: feature.id,
       path: resolveFeatureEntrypoint(feature, "stageHook"),
-      settingsJson: JSON.stringify(feature.settings ?? {}),
     }))
     .filter((hook) => hook.path != null);
 }
@@ -1400,7 +1399,7 @@ function main() {
   const command = process.argv[2];
   if (command === "--stage-hooks") {
     for (const hook of enabledLinuxFeatureStageHooks()) {
-      process.stdout.write(`${hook.id}\t${hook.path}\t${hook.settingsJson}\n`);
+      process.stdout.write(`${hook.id}\t${hook.path}\n`);
     }
     return;
   }

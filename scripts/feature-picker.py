@@ -19,11 +19,6 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 PACKAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,63}$")
 DEFAULT_PACKAGE_NAME = "codex-desktop"
 RESERVED_PACKAGE_NAMES = {"chatgpt", "codex", "codex-update-manager"}
-ISOLATION_FEATURE_ID = "community-profile-isolation"
-ISOLATION_DEFAULTS = {
-    "codexHome": "~/.codex-community",
-    "electronUserDataPath": "~/.config/Codex-Community",
-}
 
 
 class SelectionError(RuntimeError):
@@ -122,15 +117,20 @@ def discover_features(root: pathlib.Path) -> dict[str, Feature]:
     return features
 
 
-def read_current_selection(config_path: pathlib.Path, features: dict[str, Feature]) -> list[str]:
+def read_config_object(config_path: pathlib.Path) -> dict:
     if not config_path.exists():
-        return []
+        return {}
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise SelectionError(f"Could not read {config_path}: {exc}") from exc
     if not isinstance(data, dict):
         raise SelectionError(f"{config_path}: config must be a JSON object")
+    return data
+
+
+def read_current_selection(config_path: pathlib.Path, features: dict[str, Feature]) -> list[str]:
+    data = read_config_object(config_path)
     enabled = data.get("enabled", [])
     if not isinstance(enabled, list):
         raise SelectionError(f"{config_path}: enabled must be an array")
@@ -146,53 +146,14 @@ def read_current_selection(config_path: pathlib.Path, features: dict[str, Featur
     return result
 
 
-def read_current_feature_settings(config_path: pathlib.Path) -> dict[str, dict]:
-    if not config_path.exists():
-        return {}
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise SelectionError(f"Could not read {config_path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise SelectionError(f"{config_path}: config must be a JSON object")
-    raw_settings = data.get("settings", {})
-    if raw_settings is None:
-        return {}
-    if not isinstance(raw_settings, dict):
-        raise SelectionError(f"{config_path}: settings must be an object")
-    result: dict[str, dict] = {}
-    for feature_id, value in raw_settings.items():
-        if isinstance(feature_id, str) and isinstance(value, dict):
-            result[feature_id] = dict(value)
-    return result
-
-
 def read_current_installer_options(config_path: pathlib.Path) -> dict:
-    if not config_path.exists():
-        return {}
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise SelectionError(f"Could not read {config_path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise SelectionError(f"{config_path}: config must be a JSON object")
+    data = read_config_object(config_path)
     installer = data.get("installer", {})
     if installer is None:
         return {}
     if not isinstance(installer, dict):
         raise SelectionError(f"{config_path}: installer must be an object")
     return dict(installer)
-
-
-def validate_profile_path_spec(value: str, label: str) -> str:
-    value = value.strip()
-    if not value:
-        raise SelectionError(f"{label} must not be empty")
-    if "\x00" in value or "\n" in value or "\r" in value:
-        raise SelectionError(f"{label} contains unsupported control characters")
-    if value == "~" or value.startswith("~/") or value.startswith("/"):
-        return value
-    raise SelectionError(f"{label} must start with ~/ or /")
 
 
 def validate_installation_name(value: str) -> str:
@@ -213,31 +174,10 @@ def validate_installation_name(value: str) -> str:
 def write_feature_config(
     config_path: pathlib.Path,
     selected: Iterable[str],
-    incoming_settings: dict[str, dict],
     installer_options: dict | None = None,
 ) -> None:
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            raise SelectionError(f"Could not read {config_path}: {exc}") from exc
-    else:
-        data = {}
-    if not isinstance(data, dict):
-        raise SelectionError(f"{config_path}: config must be a JSON object")
-
+    data = read_config_object(config_path)
     data["enabled"] = list(selected)
-    settings = data.get("settings", {})
-    if settings is None:
-        settings = {}
-    if not isinstance(settings, dict):
-        raise SelectionError(f"{config_path}: settings must be an object")
-    for feature_id, value in incoming_settings.items():
-        if not isinstance(feature_id, str) or not isinstance(value, dict):
-            raise SelectionError("Invalid installer feature settings")
-        settings[feature_id] = dict(value)
-    if settings:
-        data["settings"] = settings
     if installer_options is not None:
         if not isinstance(installer_options, dict):
             raise SelectionError("Installer options must be an object")
@@ -482,7 +422,6 @@ def feature_matches_query(feature: Feature, query: str) -> bool:
 
 def run_gtk_picker(
     model: SelectionModel,
-    current_settings: dict[str, dict],
     current_installer_options: dict,
     *,
     install_mode: bool = False,
@@ -501,7 +440,7 @@ def run_gtk_picker(
     if config_path is not None:
         config_path = config_path.resolve()
 
-    result: dict[str, object] = {"selected": None, "settings": {}, "installOptions": {}}
+    result: dict[str, object] = {"selected": None}
 
     class PickerWindow(Gtk.ApplicationWindow):
         def __init__(self, app: Gtk.Application) -> None:
@@ -752,149 +691,10 @@ def run_gtk_picker(
             self.refreshing = False
 
         def _apply(self, _button: Gtk.Button) -> None:
-            if ISOLATION_FEATURE_ID in model.selected:
-                self._show_profile_paths()
-                return
-            self._after_profile({})
-
-        def _show_profile_paths(self) -> None:
-            page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-            page.set_margin_top(24)
-            page.set_margin_bottom(24)
-            page.set_margin_start(28)
-            page.set_margin_end(28)
-
-            heading = Gtk.Label()
-            heading.set_markup(
-                "<span size='x-large' weight='bold'>Community profile paths</span>"
-            )
-            heading.set_xalign(0)
-            page.append(heading)
-
-            intro = Gtk.Label(
-                label=(
-                    "Community Profile Isolation is enabled. These are the private "
-                    "state locations used by this Community installation. Keep the "
-                    "defaults or choose different roots."
-                )
-            )
-            intro.set_wrap(True)
-            intro.set_xalign(0)
-            page.append(intro)
-
-            settings = dict(ISOLATION_DEFAULTS)
-            pending = getattr(self, "pending_settings", {})
-            existing = pending.get(
-                ISOLATION_FEATURE_ID,
-                current_settings.get(ISOLATION_FEATURE_ID, {}),
-            )
-            for key in ISOLATION_DEFAULTS:
-                value = existing.get(key)
-                if isinstance(value, str) and value.strip():
-                    settings[key] = value.strip()
-
-            codex_label = Gtk.Label(label="Codex state root")
-            codex_label.set_xalign(0)
-            codex_label.add_css_class("heading")
-            page.append(codex_label)
-            self.codex_home_entry = Gtk.Entry()
-            self.codex_home_entry.set_text(settings["codexHome"])
-            self.codex_home_entry.set_hexpand(True)
-            page.append(self.codex_home_entry)
-
-            codex_hint = Gtk.Label(
-                label="Default: ~/.codex-community  •  Accepts ~/... or an absolute path"
-            )
-            codex_hint.set_xalign(0)
-            codex_hint.add_css_class("dim-label")
-            page.append(codex_hint)
-
-            electron_label = Gtk.Label(label="Electron profile root")
-            electron_label.set_xalign(0)
-            electron_label.add_css_class("heading")
-            page.append(electron_label)
-            self.electron_profile_entry = Gtk.Entry()
-            self.electron_profile_entry.set_text(settings["electronUserDataPath"])
-            self.electron_profile_entry.set_hexpand(True)
-            page.append(self.electron_profile_entry)
-
-            electron_hint = Gtk.Label(
-                label="Default: ~/.config/Codex-Community  •  Accepts ~/... or an absolute path"
-            )
-            electron_hint.set_xalign(0)
-            electron_hint.add_css_class("dim-label")
-            page.append(electron_hint)
-
-            install_note = Gtk.Label(
-                label=(
-                    "Native application root: /opt/codex-desktop. A custom installation "
-                    "name/root is configured in the installation-options step because "
-                    "automatic updates currently require the default package identity."
-                )
-            )
-            install_note.set_wrap(True)
-            install_note.set_xalign(0)
-            install_note.add_css_class("dim-label")
-            page.append(install_note)
-
-            self.profile_error = Gtk.Label()
-            self.profile_error.set_wrap(True)
-            self.profile_error.set_xalign(0)
-            self.profile_error.add_css_class("error")
-            page.append(self.profile_error)
-
-            spacer = Gtk.Box()
-            spacer.set_vexpand(True)
-            page.append(spacer)
-
-            footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            page.append(footer)
-
-            back = Gtk.Button(label="Back")
-            back.connect("clicked", self._back_to_features)
-            footer.append(back)
-
-            filler = Gtk.Box()
-            filler.set_hexpand(True)
-            footer.append(filler)
-
-            apply_button = Gtk.Button(label="Apply selection")
-            apply_button.add_css_class("suggested-action")
-            apply_button.connect("clicked", self._finish_profile)
-            footer.append(apply_button)
-
-            self.set_child(page)
-
-        def _back_to_features(self, _button: Gtk.Button) -> None:
-            self.set_child(self.feature_page)
-
-        def _finish_profile(self, _button: Gtk.Button) -> None:
-            try:
-                codex_home = validate_profile_path_spec(
-                    self.codex_home_entry.get_text(),
-                    "Codex state root",
-                )
-                electron_profile = validate_profile_path_spec(
-                    self.electron_profile_entry.get_text(),
-                    "Electron profile root",
-                )
-            except SelectionError as exc:
-                self.profile_error.set_text(str(exc))
-                return
-
-            self._after_profile({
-                ISOLATION_FEATURE_ID: {
-                    "codexHome": codex_home,
-                    "electronUserDataPath": electron_profile,
-                }
-            })
-
-        def _after_profile(self, settings: dict[str, dict]) -> None:
-            self.pending_settings = settings
             if install_mode:
                 self._show_install_options()
                 return
-            self._finish(settings)
+            self._finish()
 
         def _show_install_options(self) -> None:
             page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
@@ -994,48 +794,35 @@ def run_gtk_picker(
             if updater:
                 self.install_name_entry.set_text(DEFAULT_PACKAGE_NAME)
                 self.install_name_entry.set_sensitive(False)
-                self.updater_note.set_text(
-                    "Automatic updates currently require the default package identity "
-                    "'codex-desktop'. Disable automatic updates to choose another "
-                    "installation name/root."
-                )
             else:
                 self.install_name_entry.set_sensitive(True)
-                current_name = self.install_name_entry.get_text().strip()
-                custom_note = (
-                    " A custom package name installs alongside any existing "
-                    "'codex-desktop' package; it does not rename or remove it."
-                    if current_name and current_name != DEFAULT_PACKAGE_NAME
-                    else ""
-                )
-                self.updater_note.set_text(
-                    "Manual-update mode: a custom installation name is allowed. "
-                    "Rerun this installer when you want to rebuild from a newer "
-                    "official package." + custom_note
-                )
             self._sync_install_root()
 
         def _sync_install_root(self, _widget=None) -> None:
             name = self.install_name_entry.get_text().strip() or DEFAULT_PACKAGE_NAME
             self.install_root_label.set_text(f"Native application root: /opt/{name}")
-            if not self.updater_check.get_active():
-                custom_note = (
-                    " A custom package name installs alongside any existing "
-                    "'codex-desktop' package; it does not rename or remove it."
-                    if name != DEFAULT_PACKAGE_NAME
-                    else ""
-                )
+            if self.updater_check.get_active():
                 self.updater_note.set_text(
-                    "Manual-update mode: a custom installation name is allowed. "
-                    "Rerun this installer when you want to rebuild from a newer "
-                    "official package." + custom_note
+                    "Automatic updates currently require the default package identity "
+                    "'codex-desktop'. Disable automatic updates to choose another "
+                    "installation name/root."
                 )
+                return
+
+            custom_note = (
+                " A custom package name installs alongside any existing "
+                "'codex-desktop' package; it does not rename or remove it."
+                if name != DEFAULT_PACKAGE_NAME
+                else ""
+            )
+            self.updater_note.set_text(
+                "Manual-update mode: a custom installation name is allowed. "
+                "Rerun this installer when you want to rebuild from a newer "
+                "official package." + custom_note
+            )
 
         def _back_from_options(self, _button: Gtk.Button) -> None:
-            if ISOLATION_FEATURE_ID in model.selected:
-                self._show_profile_paths()
-            else:
-                self.set_child(self.feature_page)
+            self.set_child(self.feature_page)
 
         def _show_review(self, _button: Gtk.Button) -> None:
             try:
@@ -1081,19 +868,6 @@ def run_gtk_picker(
                 "Updates: " + ("automatic" if updater else "manual"),
                 f"Package format: {self.install_options['packageFormat']}",
             ]
-            if ISOLATION_FEATURE_ID in model.selected:
-                isolation = self.pending_settings.get(
-                    ISOLATION_FEATURE_ID, ISOLATION_DEFAULTS
-                )
-                review_lines.extend([
-                    f"Codex state root: {isolation.get('codexHome', ISOLATION_DEFAULTS['codexHome'])}",
-                    "Electron profile root: "
-                    + isolation.get(
-                        "electronUserDataPath",
-                        ISOLATION_DEFAULTS["electronUserDataPath"],
-                    ),
-                ])
-
             for line in review_lines:
                 label = Gtk.Label(label=line)
                 label.set_xalign(0)
@@ -1124,7 +898,6 @@ def run_gtk_picker(
                 write_feature_config(
                     config_path,
                     model.ordered_selected(),
-                    self.pending_settings,
                     self.install_options,
                 )
             except SelectionError as exc:
@@ -1132,8 +905,6 @@ def run_gtk_picker(
                 return
 
             result["selected"] = model.ordered_selected()
-            result["settings"] = self.pending_settings
-            result["installOptions"] = dict(self.install_options)
             self.install_in_progress = True
             self._show_progress_page()
             threading.Thread(target=self._run_install, daemon=True).start()
@@ -1281,9 +1052,8 @@ def run_gtk_picker(
             self.options_error.set_text(message)
             self.set_child(self.install_options_page)
 
-        def _finish(self, settings: dict[str, dict]) -> None:
+        def _finish(self) -> None:
             result["selected"] = model.ordered_selected()
-            result["settings"] = settings
             self.get_application().quit()
 
         def _close_after_install(self, _button: Gtk.Button) -> None:
@@ -1341,12 +1111,10 @@ def main() -> int:
     try:
         features = discover_features(args.features_root)
         current = read_current_selection(args.config, features)
-        current_settings = read_current_feature_settings(args.config)
         current_installer_options = read_current_installer_options(args.config)
         model = SelectionModel(features, current)
         selection_result = run_gtk_picker(
             model,
-            current_settings,
             current_installer_options,
             install_mode=args.install,
             repo_root=args.repo_root,
@@ -1363,7 +1131,8 @@ def main() -> int:
         return 2
     if args.install:
         return 0 if selection_result.get("installOk") is True else 1
-    print(json.dumps(selection_result, separators=(",", ":")))
+    for feature_id in selection_result["selected"]:
+        print(feature_id)
     return 0
 
 
