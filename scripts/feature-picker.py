@@ -16,9 +16,8 @@ from dataclasses import dataclass
 from typing import Iterable
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-PACKAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,63}$")
-DEFAULT_PACKAGE_NAME = "codex-desktop"
-RESERVED_PACKAGE_NAMES = {"chatgpt", "codex", "codex-update-manager"}
+PACKAGE_NAME = "codex-desktop"
+INSTALL_ROOT = "/opt/codex-desktop"
 
 
 class SelectionError(RuntimeError):
@@ -85,6 +84,12 @@ def discover_features(root: pathlib.Path) -> dict[str, Feature]:
         feature_id = data.get("id")
         if not isinstance(feature_id, str) or not ID_RE.fullmatch(feature_id):
             raise SelectionError(f"{manifest}: invalid feature id")
+        if data.get("defaultEnabled") is True:
+            raise SelectionError(
+                f"{manifest}: defaultEnabled true is not allowed"
+            )
+        if "internal" in data and not isinstance(data["internal"], bool):
+            raise SelectionError(f"{manifest}: internal must be a boolean")
         if data.get("internal") is True:
             continue
         if feature_id in features:
@@ -129,20 +134,73 @@ def read_config_object(config_path: pathlib.Path) -> dict:
     return data
 
 
-def read_current_selection(config_path: pathlib.Path, features: dict[str, Feature]) -> list[str]:
+def read_feature_compatibility(root: pathlib.Path) -> tuple[dict[str, str], set[str]]:
+    path = root.resolve() / "compatibility.json"
+    if not path.exists():
+        return {}, set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise SelectionError(f"Could not read {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SelectionError(f"{path}: compatibility config must be a JSON object")
+
+    aliases_raw = data.get("aliases", {})
+    retired_raw = data.get("retired", [])
+    if not isinstance(aliases_raw, dict):
+        raise SelectionError(f"{path}: aliases must be an object")
+    if not isinstance(retired_raw, list):
+        raise SelectionError(f"{path}: retired must be an array")
+
+    aliases: dict[str, str] = {}
+    for source, target in aliases_raw.items():
+        if (
+            not isinstance(source, str)
+            or not ID_RE.fullmatch(source)
+            or not isinstance(target, str)
+            or not ID_RE.fullmatch(target)
+        ):
+            raise SelectionError(f"{path}: invalid feature alias: {source!r} -> {target!r}")
+        aliases[source] = target
+
+    retired: set[str] = set()
+    for item in retired_raw:
+        if not isinstance(item, str) or not ID_RE.fullmatch(item):
+            raise SelectionError(f"{path}: invalid retired feature id: {item!r}")
+        retired.add(item)
+    return aliases, retired
+
+
+def read_current_selection(
+    config_path: pathlib.Path,
+    features: dict[str, Feature],
+    *,
+    features_root: pathlib.Path | None = None,
+) -> list[str]:
     data = read_config_object(config_path)
     enabled = data.get("enabled", [])
     if not isinstance(enabled, list):
         raise SelectionError(f"{config_path}: enabled must be an array")
 
+    aliases, retired = read_feature_compatibility(
+        features_root if features_root is not None else config_path.parent
+    )
     result: list[str] = []
     seen: set[str] = set()
     for item in enabled:
         if not isinstance(item, str) or not ID_RE.fullmatch(item):
             raise SelectionError(f"{config_path}: invalid enabled feature id: {item!r}")
-        if item in features and item not in seen:
-            seen.add(item)
-            result.append(item)
+        feature_id = aliases.get(item, item)
+        if feature_id in retired:
+            continue
+        if feature_id not in features:
+            raise SelectionError(
+                f"{config_path}: enabled feature id not found in this checkout: {feature_id}"
+            )
+        if feature_id in seen:
+            raise SelectionError(f"{config_path}: duplicate enabled feature id: {item}")
+        seen.add(feature_id)
+        result.append(feature_id)
     return result
 
 
@@ -154,21 +212,6 @@ def read_current_installer_options(config_path: pathlib.Path) -> dict:
     if not isinstance(installer, dict):
         raise SelectionError(f"{config_path}: installer must be an object")
     return dict(installer)
-
-
-def validate_installation_name(value: str) -> str:
-    value = value.strip()
-    if not PACKAGE_NAME_RE.fullmatch(value):
-        raise SelectionError(
-            "Installation name must use lowercase letters, numbers, '.', '+', or '-' "
-            "and must start with a letter or number"
-        )
-    if value in RESERVED_PACKAGE_NAMES:
-        raise SelectionError(
-            f"Installation name '{value}' is reserved and may conflict with official "
-            "ChatGPT/Codex commands"
-        )
-    return value
 
 
 def write_feature_config(
@@ -189,47 +232,40 @@ def write_feature_config(
     os.replace(temp_path, config_path)
 
 
-def os_release_tokens(path: pathlib.Path = pathlib.Path("/etc/os-release")) -> set[str]:
-    tokens: set[str] = set()
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return tokens
-    for line in lines:
-        if "=" not in line:
-            continue
-        key, raw = line.split("=", 1)
-        if key not in {"ID", "ID_LIKE"}:
-            continue
-        value = raw.strip().strip('"').strip("'").lower()
-        tokens.update(part for part in value.split() if part)
-    return tokens
-
-
-def detect_package_format() -> str:
-    tokens = os_release_tokens()
-    if tokens & {"arch", "manjaro", "endeavouros"}:
-        return "pacman"
-    if tokens & {"fedora", "rhel", "centos", "suse", "opensuse"}:
-        return "rpm"
-    if tokens & {"debian", "ubuntu", "linuxmint", "pop"}:
-        return "deb"
-    if shutil.which("dpkg-deb"):
-        return "deb"
-    if shutil.which("rpm"):
-        return "rpm"
-    if shutil.which("pacman"):
-        return "pacman"
-    raise SelectionError("No supported native package manager was detected")
+def detect_package_format(repo_root: pathlib.Path) -> str:
+    helper = repo_root.resolve() / "scripts" / "lib" / "linux-target-detect.sh"
+    if not helper.is_file():
+        raise SelectionError(f"Package-format helper is missing: {helper}")
+    process = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                'source "$1"; '
+                'OS_RELEASE_ID="$(os_release_field ID 2>/dev/null || true)"; '
+                'OS_RELEASE_ID_LIKE="$(os_release_field ID_LIKE 2>/dev/null || true)"; '
+                'OS_RELEASE_VERSION_ID="$(os_release_field VERSION_ID 2>/dev/null || true)"; '
+                'detect_package_format'
+            ),
+            "feature-picker",
+            str(helper),
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+    )
+    if process.returncode != 0:
+        detail = process.stderr.strip() or f"exit code {process.returncode}"
+        raise SelectionError(f"Could not detect native package format: {detail}")
+    package_format = process.stdout.strip()
+    if package_format not in {"deb", "rpm", "pacman"}:
+        raise SelectionError("No supported native package builder was detected")
+    return package_format
 
 
 def build_install_stages(options: dict) -> list[tuple[str, list[str]]]:
-    package_name = validate_installation_name(str(options["packageName"]))
     updater = bool(options["withUpdater"])
-    if updater and package_name != DEFAULT_PACKAGE_NAME:
-        raise SelectionError(
-            "Automatic updates require installation name 'codex-desktop'"
-        )
     stages: list[tuple[str, list[str]]] = []
     if bool(options.get("installDependencies", True)):
         stages.append(
@@ -244,29 +280,30 @@ def build_install_stages(options: dict) -> list[tuple[str, list[str]]]:
                 "make",
                 "package",
                 f"PACKAGE_WITH_UPDATER={1 if updater else 0}",
-                f"PACKAGE_NAME={package_name}",
             ],
         ),
     ])
     return stages
 
 
-def latest_package(repo_root: pathlib.Path, package_name: str, package_format: str) -> pathlib.Path:
+def latest_package(repo_root: pathlib.Path, package_format: str) -> pathlib.Path:
     dist = repo_root / "dist"
     if package_format == "deb":
-        candidates = list(dist.glob(f"{package_name}_*.deb"))
+        candidates = list(dist.glob(f"{PACKAGE_NAME}_*.deb"))
     elif package_format == "rpm":
-        candidates = list(dist.glob(f"{package_name}-*.rpm"))
+        candidates = list(dist.glob(f"{PACKAGE_NAME}-*.rpm"))
     else:
         candidates = [
             path
-            for path in dist.glob(f"{package_name}-*.pkg.tar.*")
+            for path in dist.glob(f"{PACKAGE_NAME}-*.pkg.tar.*")
             if not path.name.endswith((".sig", ".sha256", ".part"))
             and "latest" not in path.name
         ]
     candidates = [path for path in candidates if path.is_file()]
     if not candidates:
-        raise SelectionError(f"No built {package_format} package found for {package_name}")
+        raise SelectionError(
+            f"No built {package_format} package found for {PACKAGE_NAME}"
+        )
     return max(candidates, key=lambda path: path.stat().st_mtime_ns)
 
 
@@ -713,20 +750,26 @@ def run_gtk_picker(
 
             intro = Gtk.Label(
                 label=(
-                    "Choose update behavior and the native package identity. "
-                    "The installation root is derived as /opt/<installation-name>."
+                    "Choose update behavior and whether build dependencies should "
+                    "be installed before the native build."
                 )
             )
             intro.set_wrap(True)
             intro.set_xalign(0)
             page.append(intro)
 
+            identity = Gtk.Label(
+                label=f"Package: {PACKAGE_NAME}  •  Install root: {INSTALL_ROOT}"
+            )
+            identity.set_xalign(0)
+            identity.add_css_class("dim-label")
+            page.append(identity)
+
             self.updater_check = Gtk.CheckButton(label="Include automatic updater")
             saved_updater = current_installer_options.get("withUpdater", True)
             self.updater_check.set_active(
                 saved_updater if isinstance(saved_updater, bool) else True
             )
-            self.updater_check.connect("toggled", self._sync_install_options)
             page.append(self.updater_check)
 
             self.deps_check = Gtk.CheckButton(
@@ -737,31 +780,6 @@ def run_gtk_picker(
                 saved_deps if isinstance(saved_deps, bool) else True
             )
             page.append(self.deps_check)
-
-            name_label = Gtk.Label(label="Installation name")
-            name_label.set_xalign(0)
-            name_label.add_css_class("heading")
-            page.append(name_label)
-
-            self.install_name_entry = Gtk.Entry()
-            saved_name = current_installer_options.get(
-                "packageName", DEFAULT_PACKAGE_NAME
-            )
-            if not isinstance(saved_name, str) or not PACKAGE_NAME_RE.fullmatch(saved_name):
-                saved_name = DEFAULT_PACKAGE_NAME
-            self.install_name_entry.set_text(saved_name)
-            self.install_name_entry.connect("changed", self._sync_install_root)
-            page.append(self.install_name_entry)
-
-            self.install_root_label = Gtk.Label()
-            self.install_root_label.set_xalign(0)
-            self.install_root_label.add_css_class("dim-label")
-            page.append(self.install_root_label)
-
-            self.updater_note = Gtk.Label()
-            self.updater_note.set_wrap(True)
-            self.updater_note.set_xalign(0)
-            page.append(self.updater_note)
 
             self.options_error = Gtk.Label()
             self.options_error.set_wrap(True)
@@ -786,65 +804,24 @@ def run_gtk_picker(
             review.connect("clicked", self._show_review)
             footer.append(review)
 
-            self._sync_install_options()
             self.set_child(page)
-
-        def _sync_install_options(self, _widget=None) -> None:
-            updater = self.updater_check.get_active()
-            if updater:
-                self.install_name_entry.set_text(DEFAULT_PACKAGE_NAME)
-                self.install_name_entry.set_sensitive(False)
-            else:
-                self.install_name_entry.set_sensitive(True)
-            self._sync_install_root()
-
-        def _sync_install_root(self, _widget=None) -> None:
-            name = self.install_name_entry.get_text().strip() or DEFAULT_PACKAGE_NAME
-            self.install_root_label.set_text(f"Native application root: /opt/{name}")
-            if self.updater_check.get_active():
-                self.updater_note.set_text(
-                    "Automatic updates currently require the default package identity "
-                    "'codex-desktop'. Disable automatic updates to choose another "
-                    "installation name/root."
-                )
-                return
-
-            custom_note = (
-                " A custom package name installs alongside any existing "
-                "'codex-desktop' package; it does not rename or remove it."
-                if name != DEFAULT_PACKAGE_NAME
-                else ""
-            )
-            self.updater_note.set_text(
-                "Manual-update mode: a custom installation name is allowed. "
-                "Rerun this installer when you want to rebuild from a newer "
-                "official package." + custom_note
-            )
 
         def _back_from_options(self, _button: Gtk.Button) -> None:
             self.set_child(self.feature_page)
 
         def _show_review(self, _button: Gtk.Button) -> None:
+            updater = self.updater_check.get_active()
+            assert repo_root is not None
             try:
-                package_name = validate_installation_name(
-                    self.install_name_entry.get_text()
-                )
+                package_format = detect_package_format(repo_root)
             except SelectionError as exc:
                 self.options_error.set_text(str(exc))
                 return
 
-            updater = self.updater_check.get_active()
-            if updater and package_name != DEFAULT_PACKAGE_NAME:
-                self.options_error.set_text(
-                    "Automatic updates require installation name 'codex-desktop'."
-                )
-                return
-
             self.install_options = {
-                "packageName": package_name,
                 "withUpdater": updater,
                 "installDependencies": self.deps_check.get_active(),
-                "packageFormat": detect_package_format(),
+                "packageFormat": package_format,
             }
 
             page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
@@ -863,8 +840,8 @@ def run_gtk_picker(
             ]
             review_lines = [
                 "Features: " + (", ".join(selected_names) if selected_names else "none"),
-                f"Package: {package_name}",
-                f"Install root: /opt/{package_name}",
+                f"Package: {PACKAGE_NAME}",
+                f"Install root: {INSTALL_ROOT}",
                 "Updates: " + ("automatic" if updater else "manual"),
                 f"Package format: {self.install_options['packageFormat']}",
             ]
@@ -894,6 +871,11 @@ def run_gtk_picker(
         def _start_install(self, _button: Gtk.Button) -> None:
             assert config_path is not None
             assert repo_root is not None
+            if os.geteuid() != 0 and shutil.which("pkexec") is None:
+                self._show_install_error(
+                    "pkexec is required for privileged installation from the graphical installer"
+                )
+                return
             try:
                 write_feature_config(
                     config_path,
@@ -993,23 +975,28 @@ def run_gtk_picker(
         def _install_artifact_command(
             self, package: pathlib.Path, package_format: str
         ) -> list[str]:
-            privilege = shutil.which("pkexec") or shutil.which("sudo")
-            if privilege is None:
-                raise SelectionError("pkexec or sudo is required to install the package")
+            if os.geteuid() == 0:
+                privilege: list[str] = []
+            else:
+                pkexec = shutil.which("pkexec")
+                if pkexec is None:
+                    raise SelectionError(
+                        "pkexec is required for privileged installation from the graphical installer"
+                    )
+                privilege = [pkexec]
+
             if package_format == "deb":
-                return [privilege, "dpkg", "-i", str(package)]
+                return [*privilege, "dpkg", "-i", str(package)]
             if package_format == "rpm":
                 if shutil.which("dnf"):
-                    return [privilege, "dnf", "install", "-y", str(package)]
-                return [privilege, "rpm", "-Uvh", str(package)]
-            return [privilege, "pacman", "-U", "--noconfirm", str(package)]
+                    return [*privilege, "dnf", "install", "-y", str(package)]
+                return [*privilege, "rpm", "-Uvh", str(package)]
+            return [*privilege, "pacman", "-U", "--noconfirm", str(package)]
 
         def _run_install(self) -> None:
             assert repo_root is not None
             assert config_path is not None
             options = self.install_options
-            package_name = options["packageName"]
-            updater = options["withUpdater"]
             package_format = options["packageFormat"]
 
             env = os.environ.copy()
@@ -1025,7 +1012,7 @@ def run_gtk_picker(
                     GLib.idle_add(self._set_progress, index / total, label)
                     self._run_process(command, env)
 
-                package = latest_package(repo_root, package_name, package_format)
+                package = latest_package(repo_root, package_format)
                 GLib.idle_add(
                     self._set_progress,
                     (total - 1) / total,
@@ -1069,7 +1056,8 @@ def run_gtk_picker(
                     "Installation is still running. Wait for it to finish before closing."
                 )
                 return True
-            result["selected"] = None
+            if "installOk" not in result:
+                result["selected"] = None
             self.get_application().quit()
             return False
 
@@ -1088,10 +1076,13 @@ def gtk_probe() -> int:
         import gi
 
         gi.require_version("Gtk", "4.0")
-        from gi.repository import Gtk  # noqa: F401
+        gi.require_version("Gdk", "4.0")
+        from gi.repository import Gdk, Gtk
+
+        Gtk.init()
+        return 0 if Gdk.Display.get_default() is not None else 1
     except Exception:
         return 1
-    return 0
 
 
 def main() -> int:
@@ -1110,7 +1101,11 @@ def main() -> int:
 
     try:
         features = discover_features(args.features_root)
-        current = read_current_selection(args.config, features)
+        current = read_current_selection(
+            args.config,
+            features,
+            features_root=args.features_root,
+        )
         current_installer_options = read_current_installer_options(args.config)
         model = SelectionModel(features, current)
         selection_result = run_gtk_picker(
@@ -1128,7 +1123,7 @@ def main() -> int:
         return 1
 
     if selection_result is None:
-        return 2
+        return 0 if args.install else 2
     if args.install:
         return 0 if selection_result.get("installOk") is True else 1
     for feature_id in selection_result["selected"]:

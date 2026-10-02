@@ -46,7 +46,7 @@ flow:
 
 1. choose optional features; requirements are selected automatically and
    conflicting rows are disabled with a visible explanation;
-2. choose updater/dependency options and the native installation identity;
+2. choose updater/dependency options while the native package identity remains fixed;
 3. review the resolved configuration;
 4. build, package, and install while a stage progress bar and live log remain
    visible.
@@ -56,10 +56,10 @@ settings. It updates the enabled-feature list and its own installer preferences
 in the gitignored `linux-features/features.json`, preserving any existing
 feature settings unchanged.
 
-Automatic updates currently require the default `codex-desktop` package
-identity and `/opt/codex-desktop` root because the update manager verifies that
-package identity. Turning the updater off enables a validated custom installation
-name, mapped to `/opt/<installation-name>`.
+Native output always keeps the repository package identity
+`codex-desktop` under `/opt/codex-desktop`. The updater choice controls only
+whether the update manager is included; it never changes the package name,
+executable identity, or installation root.
 
 On systems without the GTK picker, `./install-community` falls back to the
 existing terminal guided setup.

@@ -94,10 +94,9 @@ visible.
 The graphical installer does not modify feature implementations or feature
 settings. It updates only the enabled-feature list and its own installer
 preferences in the gitignored `linux-features/features.json`; any existing
-feature settings are preserved unchanged. Automatic-update packages keep the
-normal `codex-desktop` identity and `/opt/codex-desktop` root. Manual-update
-mode may instead use a validated custom installation name, which maps to
-`/opt/<installation-name>`.
+feature settings are preserved unchanged. Native output always keeps the
+repository identity `codex-desktop` under `/opt/codex-desktop`, whether or not
+the automatic updater is included.
 
 To configure features without installing yet, keep using:
 

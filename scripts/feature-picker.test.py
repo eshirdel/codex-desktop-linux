@@ -135,16 +135,6 @@ class FeaturePickerModelTests(unittest.TestCase):
         )
         self.assertFalse(feature_picker.feature_matches_query(feature, "shared socket"))
 
-    def test_installation_name_validation(self):
-        self.assertEqual(
-            feature_picker.validate_installation_name("codex-community-2"),
-            "codex-community-2",
-        )
-        for value in ("Codex", "../codex", "codex/name", "_codex", ""):
-            with self.subTest(value=value):
-                with self.assertRaises(feature_picker.SelectionError):
-                    feature_picker.validate_installation_name(value)
-
     def test_feature_config_writer_preserves_unrelated_settings(self):
         with tempfile.TemporaryDirectory() as temp:
             config = pathlib.Path(temp) / "features.json"
@@ -154,12 +144,16 @@ class FeaturePickerModelTests(unittest.TestCase):
                     "ui-tweaks": {"keep": True},
                     "community-profile-isolation": {"codexHome": "~/.old"},
                 },
+                "installer": {
+                    "packageName": "legacy-custom-name",
+                    "withUpdater": True,
+                    "installDependencies": False,
+                },
             }))
             feature_picker.write_feature_config(
                 config,
                 ["community-profile-isolation"],
                 {
-                    "packageName": "codex-team",
                     "withUpdater": False,
                     "installDependencies": True,
                 },
@@ -171,48 +165,66 @@ class FeaturePickerModelTests(unittest.TestCase):
                 data["settings"]["community-profile-isolation"],
                 {"codexHome": "~/.old"},
             )
-            self.assertEqual(data["installer"]["packageName"], "codex-team")
-            self.assertFalse(data["installer"]["withUpdater"])
+            self.assertEqual(
+                data["installer"],
+                {"withUpdater": False, "installDependencies": True},
+            )
 
-    def test_install_plan_keeps_updater_on_default_identity(self):
+    def test_install_plan_keeps_fixed_package_identity_with_updater(self):
         stages = feature_picker.build_install_stages({
-            "packageName": "codex-desktop",
             "withUpdater": True,
             "installDependencies": False,
         })
         self.assertEqual(
-            stages[-1][1][-2:],
-            ["PACKAGE_WITH_UPDATER=1", "PACKAGE_NAME=codex-desktop"],
+            stages[-1][1],
+            ["make", "package", "PACKAGE_WITH_UPDATER=1"],
         )
 
-    def test_install_plan_allows_custom_identity_only_without_updater(self):
+    def test_install_plan_keeps_fixed_package_identity_without_updater(self):
         stages = feature_picker.build_install_stages({
-            "packageName": "codex-team",
             "withUpdater": False,
             "installDependencies": True,
         })
         self.assertEqual(stages[0][1], ["bash", "scripts/install-deps.sh"])
         self.assertEqual(
-            stages[-1][1][-2:],
-            ["PACKAGE_WITH_UPDATER=0", "PACKAGE_NAME=codex-team"],
+            stages[-1][1],
+            ["make", "package", "PACKAGE_WITH_UPDATER=0"],
         )
-        with self.assertRaises(feature_picker.SelectionError):
-            feature_picker.build_install_stages({
-                "packageName": "codex-team",
-                "withUpdater": True,
-                "installDependencies": False,
-            })
+        self.assertEqual(feature_picker.PACKAGE_NAME, "codex-desktop")
+        self.assertEqual(feature_picker.INSTALL_ROOT, "/opt/codex-desktop")
 
-    def test_os_release_token_parser_ignores_unrelated_arch_text(self):
+    def test_latest_package_ignores_noncanonical_package_names(self):
         with tempfile.TemporaryDirectory() as temp:
-            release = pathlib.Path(temp) / "os-release"
-            release.write_text(
-                'NAME="Architecture Lab Ubuntu"\nID=ubuntu\nID_LIKE="debian"\n'
-            )
+            root = pathlib.Path(temp)
+            dist = root / "dist"
+            dist.mkdir()
+            canonical = dist / "codex-desktop_2026.10.02_amd64.deb"
+            custom = dist / "codex-team_2026.10.02_amd64.deb"
+            canonical.write_bytes(b"canonical")
+            custom.write_bytes(b"custom")
+
             self.assertEqual(
-                feature_picker.os_release_tokens(release),
-                {"ubuntu", "debian"},
+                feature_picker.latest_package(root, "deb"),
+                canonical,
             )
+
+    def test_package_format_uses_repository_detector(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            helper = root / "scripts" / "lib" / "linux-target-detect.sh"
+            helper.parent.mkdir(parents=True)
+            helper.write_text(
+                'os_release_field() { return 1; }\n'
+                'detect_package_format() { printf "%s\\n" rpm; }\n'
+            )
+            self.assertEqual(feature_picker.detect_package_format(root), "rpm")
+
+            helper.write_text(
+                'os_release_field() { return 1; }\n'
+                'detect_package_format() { printf "%s\\n" unknown; }\n'
+            )
+            with self.assertRaises(feature_picker.SelectionError):
+                feature_picker.detect_package_format(root)
 
     def test_impossible_dependency_conflict_is_rejected(self):
         features = {
@@ -221,6 +233,74 @@ class FeaturePickerModelTests(unittest.TestCase):
         }
         with self.assertRaises(feature_picker.SelectionError):
             feature_picker.SelectionModel(features)
+
+    def test_manifest_discovery_rejects_invalid_public_contracts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            directory = root / "bad"
+            directory.mkdir()
+            (directory / "README.md").write_text("# bad\n")
+            manifest = directory / "feature.json"
+
+            manifest.write_text(json.dumps({
+                "id": "bad",
+                "title": "Bad",
+                "description": "",
+                "defaultEnabled": True,
+            }))
+            with self.assertRaises(feature_picker.SelectionError):
+                feature_picker.discover_features(root)
+
+            manifest.write_text(json.dumps({
+                "id": "bad",
+                "title": "Bad",
+                "description": "",
+                "defaultEnabled": False,
+                "internal": "yes",
+            }))
+            with self.assertRaises(feature_picker.SelectionError):
+                feature_picker.discover_features(root)
+
+    def test_current_config_ignores_retired_aliases_and_rejects_unknown_ids(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            feature_dir = root / "live-feature"
+            feature_dir.mkdir()
+            (feature_dir / "README.md").write_text("# live\n")
+            (feature_dir / "feature.json").write_text(json.dumps({
+                "id": "live-feature",
+                "title": "Live Feature",
+                "description": "",
+                "defaultEnabled": False,
+            }))
+            (root / "compatibility.json").write_text(json.dumps({
+                "aliases": {"legacy-alias": "retired-feature"},
+                "retired": ["retired-feature"],
+            }))
+
+            features = feature_picker.discover_features(root)
+            config = root / "features.json"
+            config.write_text(json.dumps({
+                "enabled": ["legacy-alias", "live-feature"],
+            }))
+            self.assertEqual(
+                feature_picker.read_current_selection(
+                    config,
+                    features,
+                    features_root=root,
+                ),
+                ["live-feature"],
+            )
+
+            config.write_text(json.dumps({
+                "enabled": ["live-feature", "typo-feature"],
+            }))
+            with self.assertRaises(feature_picker.SelectionError):
+                feature_picker.read_current_selection(
+                    config,
+                    features,
+                    features_root=root,
+                )
 
     def test_manifest_discovery_and_current_config(self):
         with tempfile.TemporaryDirectory() as temp:
