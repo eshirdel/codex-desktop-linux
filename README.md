@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  English | <a href="README.zh-CN.md">简体中文</a>
+  English | <a href="README.zh-CN.md">简体中文</a> | <a href="README.fa.md">فارسی</a>
 </p>
 
 `codex-desktop` is an unofficial, community-maintained distribution of
